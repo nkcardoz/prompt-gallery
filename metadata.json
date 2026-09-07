@@ -1,0 +1,6 @@
+{
+  "name": "PromptFoundry",
+  "description": "Discover, build and share AI prompts, agents, automations, workflows, and templates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

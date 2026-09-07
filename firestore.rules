@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'imailnitin.kulaye@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isModerator() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'moderator')
+      );
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if true;
+      // Allow users to create/update their own profile, or admins to update
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Resources collection
+    match /resources/{resourceId} {
+      // Public can read published resources; owners/moderators/admins can read any status
+      allow read: if resource.data.status == 'published' || 
+                     (isAuthenticated() && (resource.data.authorId == request.auth.uid || isModerator()));
+      
+      // Creation: Authenticated user can create resource if authorId matches their uid, or admin
+      allow create: if isAuthenticated() && 
+                       (request.resource.data.authorId == request.auth.uid || isAdmin());
+
+      // Update: Owner can update their resource, or admin/moderator can update, or safe counter updates
+      allow update: if (isAuthenticated() && (resource.data.authorId == request.auth.uid || isModerator())) ||
+                       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']) && 
+                        request.resource.data.views == resource.data.views + 1) ||
+                       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['copiesCount']) && 
+                        request.resource.data.copiesCount == resource.data.copiesCount + 1) ||
+                       (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesCount']) &&
+                        (request.resource.data.likesCount == resource.data.likesCount + 1 || request.resource.data.likesCount == resource.data.likesCount - 1)) ||
+                       (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bookmarksCount']) &&
+                        (request.resource.data.bookmarksCount == resource.data.bookmarksCount + 1 || request.resource.data.bookmarksCount == resource.data.bookmarksCount - 1)) ||
+                       (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentsCount']) &&
+                        (request.resource.data.commentsCount == resource.data.commentsCount + 1 || request.resource.data.commentsCount == resource.data.commentsCount - 1));
+
+      // Delete: Owner or admin
+      allow delete: if isAuthenticated() && 
+                       (resource.data.authorId == request.auth.uid || isAdmin());
+
+      // Subcollection for Likes
+      match /likes/{userId} {
+        allow read: if true;
+        allow create, delete: if isAuthenticated() && request.auth.uid == userId;
+        allow update: if false;
+      }
+
+      // Subcollection for Bookmarks
+      match /bookmarks/{userId} {
+        allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+        allow create, delete: if isAuthenticated() && request.auth.uid == userId;
+        allow update: if false;
+      }
+
+      // Subcollection for Comments
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+        allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isModerator());
+        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isModerator());
+      }
+    }
+
+    // Categories collection
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Tags collection
+    match /tags/{tagId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Homepage and Site Configuration
+    match /siteSettings/{document} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /homepageConfig/{document} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Direct User Bookmarks reference
+    match /user_bookmarks/{bookmarkId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if false;
+    }
+  }
+}
